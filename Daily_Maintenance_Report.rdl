@@ -1,0 +1,2368 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Report MustUnderstand="df" xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner" xmlns:df="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition/defaultfontfamily">
+  <df:DefaultFontFamily>Segoe UI</df:DefaultFontFamily>
+  <AutoRefresh>0</AutoRefresh>
+  <DataSources>
+    <DataSource Name="genpowerrtdbqa">
+      <ConnectionProperties>
+        <DataProvider>SQL</DataProvider>
+        <ConnectString>Data Source=genpowerrtdbqa;Initial Catalog=PowerRT</ConnectString>
+        <Prompt>Enter a user name and password to access the data source:</Prompt>
+      </ConnectionProperties>
+      <rd:SecurityType>DataBase</rd:SecurityType>
+      <rd:DataSourceID>1170ca7c-8c03-43a9-8527-51becd9d2e17</rd:DataSourceID>
+    </DataSource>
+    <DataSource Name="genpowerrtdbPROD">
+      <ConnectionProperties>
+        <DataProvider>SQL</DataProvider>
+        <ConnectString>Data Source=pvmwazeus07;Initial Catalog=PowerRT</ConnectString>
+        <Prompt>Enter a user name and password to access the data source:</Prompt>
+      </ConnectionProperties>
+      <rd:SecurityType>DataBase</rd:SecurityType>
+      <rd:DataSourceID>94049319-93c0-4bdc-b100-adc468ea5c90</rd:DataSourceID>
+    </DataSource>
+  </DataSources>
+  <DataSets>
+    <DataSet Name="maintenance_status">
+      <Query>
+        <DataSourceName>genpowerrtdbPROD</DataSourceName>
+        <CommandText>select cal_day,region,region_priority_id,plants_999,qt,total_plants,((plants_999/qt)-1)*100 perc_ctq
+,(plants_999/(total_plants*.1))*10 perc_999
+from (
+select cal_day,region,count(case when Conf = 1 then global_entity_id else null end) plants_999, count(*)total_plants,count(*)*.1 qt,
+case when region in ('ERCOT','PJM') then 3 
+when region in ('CAISO','ISONE','MISO','NYISO','SPP') then 2
+when region in ('SERC','WECC') then 1 else null end region_priority_id
+from 
+(
+	SELECT
+			es.name as Region
+			,ged.GlobalEntityId as Global_Entity_ID
+			,e.name as Plant_Name
+			,ConfidenceValue Conf
+			--,cast(conf.BeginDate AS DATE) as cal_day
+			,conf.BeginDate as Reporting_Date_Begin
+			,conf.EndDate as Reporting_Date_End
+		--	,cast(conf.BeginDate AS DATE) as Reporting_Date_Begin
+		--	,cast(conf.EndDate AS DATE) as Reporting_Date_End -- select * 
+			,Note,DataProviderCode_Name, DataStreamSourceCode_Name, CollectionSystemTypeCode_Name,
+						DATEDIFF(dd, begindate, GETDATE()) date_diff
+			FROM entitlement.Entityset es (NOLOCK)
+				JOIN entitlement.GenscapeAggregationEntitySetDetail ged (NOLOCK)
+						ON es.EntitysetId = ged.EntitysetId
+				JOIN entitlement.EntityUniverse e (NOLOCK)
+						ON ged.GlobalEntityId = e.GlobalEntityId
+				JOIN powerrt.ContentConfidence conf (NOLOCK)
+						ON ged.GlobalEntityId = conf.GlobalEntityId
+				join masterdata.DimCollectionInstanceType instype (NOLOCK)
+						ON instype.DimCollectionInstanceTypeId = conf.CollectionInstanceTypeId
+			    join powerrt.powerrt.GlobalEntityDisplayOption gedo (NOLOCK)
+						on gedo.GlobalEntityId = ged.GlobalEntityId
+		where es.EntitlementEntitysetId in (82487322,82487297,82589091,82487307,82487329,82487337,82487344,82589096,82487466,82589099) -- region id
+			AND e.EntityTypeId IN (20, 19) -- PowerPlant, GenerationAggregation
+	--		AND conf.ConfidenceValue = 1.00
+			AND gedo.IsMonitored = 1 and gedo.ShowInProduct = 1
+			AND conf.BeginDate &gt;= DATEADD(YEAR, DATEDIFF(YEAR, 0, DATEADD(year, -2, GETDATE())), 0)
+union all
+
+	SELECT
+			dg.MenuName GeographyZone
+			,e.GlobalEntityId
+			,e.Name
+			,ConfidenceValue as conf
+		--	,cc.begindate
+			,cc.begindate
+			,cc.enddate
+			,Note,DataProviderCode_Name, DataStreamSourceCode_Name, CollectionSystemTypeCode_Name, DATEDIFF(dd, BeginDate, GETDATE()) date_diff
+		FROM entitlement.EntityUniverse e  (NOLOCK)
+			JOIN masterdata.DimGeographicalZone dg (NOLOCK)
+					ON dg.DimGeographicalZoneId = e.GeographyZoneId 
+			JOIN powerrt.ContentConfidence cc (NOLOCK)
+					ON e.GlobalEntityId = cc.GlobalEntityId 
+			join masterdata.DimCollectionInstanceType instype (NOLOCK)
+			on instype.DimCollectionInstanceTypeId = cc.CollectionInstanceTypeId
+			join powerrt.powerrt.GlobalEntityDisplayOption gedo (NOLOCK)
+				on gedo.GlobalEntityId = e.GlobalEntityId
+		WHERE e.EntityTypeId IN (19,20)
+			AND e.ProductRegionId = 1
+			AND gedo.IsMonitored = 1 and gedo.ShowInProduct = 1
+			AND e.countryid = 65364955
+			AND dg.MenuName IN ('SERC','WECC')
+		--	AND cc.ConfidenceValue = 1.00
+			AND cc.BeginDate &gt;= DATEADD(YEAR, DATEDIFF(YEAR, 0, DATEADD(year, -2, GETDATE())), 0)
+			)a
+			inner join 
+			(
+			SELECT
+				CAST(DATEADD(DAY, nbr - 1, '20130101') as date) cal_day
+			FROM (
+				SELECT ROW_NUMBER() OVER ( ORDER BY c.object_id ) AS Nbr
+				FROM sys.columns c
+				) nbrs
+			WHERE nbr - 1 &lt;= DATEDIFF(DAY, '20170101', '20231001')
+				AND DATEADD(DAY, nbr - 1, '20130101')  &lt; GETDATE())b
+--ON b.cal_day &gt;= a.Reporting_Date_Begin
+ON b.cal_day &gt;= cast(CONVERT(VARCHAR(10), Reporting_Date_Begin, 121) as date)
+--				AND b.cal_day &lt;= a.Reporting_Date_End --excludes the last day of the maintenance
+				AND b.cal_day &lt; cast(CONVERT(VARCHAR(10), a.Reporting_Date_END, 121) as date) --excludes the last day of the maintenance
+--WHERE Reporting_Date_Begin &lt;&gt; Reporting_Date_END -- excludes the plants that were shaded/unshaded on the same day
+WHERE cast(CONVERT(VARCHAR(10), Reporting_Date_Begin, 121) as date) &lt;&gt; cast(CONVERT(VARCHAR(10), Reporting_Date_END, 121) as date)-- excludes the plants that were shaded/unshaded on the same day
+AND cal_day = CAST(GETDATE() AS DATE)
+group by cal_day,region,case when region in ('ERCOT','PJM') then 3 
+when region in ('CAISO','ISONE','MISO','NYISO','SPP') then 2
+when region in ('SERC','WECC') then 1 else null end )tbl
+--order by region_priority_id desc,region
+
+UNION
+
+--TOTAL
+select cal_day,region,region_priority_id,plants_999,qt,total_plants,null perc_ctq
+,(plants_999/(total_plants*.1))*10 perc_999
+from (
+select cal_day,'Total'region,count(case when Conf = 1 then global_entity_id else null end) plants_999, count(*)total_plants,count(*)*.1 qt,0 region_priority_id
+from 
+(select distinct f.* from(
+	SELECT
+		--	es.name as Region
+			ged.GlobalEntityId as Global_Entity_ID
+			,e.name as Plant_Name
+			,ConfidenceValue Conf
+			--,cast(conf.BeginDate AS DATE) as cal_day
+			--,cast(conf.BeginDate AS DATE) as Reporting_Date_Begin
+			--,cast(conf.EndDate AS DATE) as Reporting_Date_End -- select * 
+			,conf.BeginDate as Reporting_Date_Begin
+			,conf.EndDate as Reporting_Date_End
+			,Note,DataProviderCode_Name, DataStreamSourceCode_Name, CollectionSystemTypeCode_Name,
+						DATEDIFF(dd, begindate, GETDATE()) date_diff
+			FROM entitlement.Entityset es (NOLOCK)
+				JOIN entitlement.GenscapeAggregationEntitySetDetail ged (NOLOCK)
+						ON es.EntitysetId = ged.EntitysetId
+				JOIN entitlement.EntityUniverse e (NOLOCK)
+						ON ged.GlobalEntityId = e.GlobalEntityId
+				JOIN powerrt.ContentConfidence conf (NOLOCK)
+						ON ged.GlobalEntityId = conf.GlobalEntityId
+				join masterdata.DimCollectionInstanceType instype (NOLOCK)
+						ON instype.DimCollectionInstanceTypeId = conf.CollectionInstanceTypeId
+				join powerrt.powerrt.GlobalEntityDisplayOption gedo (NOLOCK)
+						on gedo.GlobalEntityId = ged.GlobalEntityId
+		where es.EntitlementEntitysetId in (82487322,82487297,82589091,82487307,82487329,82487337,82487344,82589096,82487466,82589099) -- region id
+			AND e.EntityTypeId IN (20, 19) -- PowerPlant, GenerationAggregation
+			AND gedo.IsMonitored = 1 and gedo.ShowInProduct = 1
+	--		AND conf.ConfidenceValue = 1.00
+	--		AND conf.BeginDate &gt;= DATEADD(YEAR, DATEDIFF(YEAR, 0, DATEADD(year, -1, GETDATE())), 0)
+	--		AND conf.BeginDate &gt;= GETDATE()-365
+union all
+
+	SELECT
+		--	dg.MenuName GeographyZone
+			e.GlobalEntityId
+			,e.Name
+			,ConfidenceValue as conf
+		--	,cc.begindate
+		--	,cast(CONVERT(VARCHAR(10), cc.begindate, 121) as date) as begindate
+		--    ,cast(CONVERT(VARCHAR(10), cc.enddate, 121) as date) as enddate
+			,cc.BeginDate as Reporting_Date_Begin
+			,cc.EndDate as Reporting_Date_End
+			,Note,DataProviderCode_Name, DataStreamSourceCode_Name, CollectionSystemTypeCode_Name, DATEDIFF(dd, BeginDate, GETDATE()) date_diff
+		FROM entitlement.EntityUniverse e  (NOLOCK)
+			JOIN masterdata.DimGeographicalZone dg (NOLOCK)
+					ON dg.DimGeographicalZoneId = e.GeographyZoneId 
+			JOIN powerrt.ContentConfidence cc (NOLOCK)
+					ON e.GlobalEntityId = cc.GlobalEntityId 
+			join masterdata.DimCollectionInstanceType instype (NOLOCK)
+			on instype.DimCollectionInstanceTypeId = cc.CollectionInstanceTypeId
+			join powerrt.powerrt.GlobalEntityDisplayOption gedo (NOLOCK)
+				on gedo.GlobalEntityId = e.GlobalEntityId
+		WHERE e.EntityTypeId IN (19,20)
+			AND e.ProductRegionId = 1
+			AND e.countryid = 65364955
+			AND gedo.IsMonitored = 1 and gedo.ShowInProduct = 1
+			AND dg.MenuName IN ('SERC','WECC')
+			)f
+		--	AND cc.ConfidenceValue = 1.00
+		--	AND cc.BeginDate &gt;= DATEADD(YEAR, DATEDIFF(YEAR, 0, DATEADD(year, -1, GETDATE())), 0)
+		--	AND cc.BeginDate &gt;= GETDATE()-365
+			)a
+			
+			inner join 
+			(
+			SELECT
+				CAST(DATEADD(DAY, nbr - 1, '20130101') as date) cal_day
+			FROM (
+				SELECT ROW_NUMBER() OVER ( ORDER BY c.object_id ) AS Nbr
+				FROM sys.columns c
+				) nbrs
+			WHERE nbr - 1 &lt;= DATEDIFF(DAY, '20170101', '20231001')
+				AND DATEADD(DAY, nbr - 1, '20130101')  &lt; GETDATE())b
+--ON b.cal_day &gt;= a.Reporting_Date_Begin
+ON b.cal_day &gt;= cast(CONVERT(VARCHAR(10), Reporting_Date_Begin, 121) as date)
+--				AND b.cal_day &lt;= a.Reporting_Date_End -1 --excludes the last day of the maintenance
+				AND b.cal_day &lt; cast(CONVERT(VARCHAR(10), a.Reporting_Date_END, 121) as date) --excludes the last day of the maintenance
+--WHERE Reporting_Date_Begin &lt;&gt; Reporting_Date_END -- excludes the plants that were shaded/unshaded on the same day
+WHERE cast(CONVERT(VARCHAR(10), Reporting_Date_Begin, 121) as date) &lt;&gt; cast(CONVERT(VARCHAR(10), Reporting_Date_END, 121) as date)-- excludes the plants that were shaded/unshaded on the same day
+AND cal_day = CAST(GETDATE() AS DATE)
+group by cal_day)tbl
+order by region_priority_id desc,region;</CommandText>
+        <rd:UseGenericDesigner>true</rd:UseGenericDesigner>
+      </Query>
+      <Fields>
+        <Field Name="cal_day">
+          <DataField>cal_day</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="region">
+          <DataField>region</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="region_priority_id">
+          <DataField>region_priority_id</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="plants_999">
+          <DataField>plants_999</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="qt">
+          <DataField>qt</DataField>
+          <rd:TypeName>System.Decimal</rd:TypeName>
+        </Field>
+        <Field Name="total_plants">
+          <DataField>total_plants</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="perc_ctq">
+          <DataField>perc_ctq</DataField>
+          <rd:TypeName>System.Decimal</rd:TypeName>
+        </Field>
+        <Field Name="perc_999">
+          <DataField>perc_999</DataField>
+          <rd:TypeName>System.Decimal</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="plant_by_region">
+      <Query>
+        <DataSourceName>genpowerrtdbPROD</DataSourceName>
+        <CommandText>WITH entities --(Region,Global_Entity_ID,Plant_Name,cal_day,Reporting_Date_Begin,Reporting_Date_End,Note,DataProviderCode_Name,DataStreamSourceCode_Name,date_diff)
+AS(
+		SELECT
+			es.name as Region
+			,ged.GlobalEntityId as Global_Entity_ID
+			,e.name as Plant_Name
+			--,cast(conf.BeginDate AS DATE) as cal_day
+			,cast(conf.BeginDate AS DATE) as Reporting_Date_Begin
+			,cast(conf.EndDate AS DATE) as Reporting_Date_End -- select * 
+			,Note,DataProviderCode_Name, DataStreamSourceCode_Name, CollectionSystemTypeCode_Name,
+						DATEDIFF(dd, begindate, GETDATE()) date_diff
+			FROM entitlement.Entityset es (NOLOCK)
+				JOIN entitlement.GenscapeAggregationEntitySetDetail ged (NOLOCK)
+						ON es.EntitysetId = ged.EntitysetId
+				JOIN entitlement.EntityUniverse e (NOLOCK)
+						ON ged.GlobalEntityId = e.GlobalEntityId
+				JOIN powerrt.ContentConfidence conf (NOLOCK)
+						ON ged.GlobalEntityId = conf.GlobalEntityId
+				join masterdata.DimCollectionInstanceType instype (NOLOCK)
+						ON instype.DimCollectionInstanceTypeId = conf.CollectionInstanceTypeId
+			    join powerrt.powerrt.GlobalEntityDisplayOption gedo (NOLOCK)
+						on gedo.GlobalEntityId = ged.GlobalEntityId
+		where es.EntitlementEntitysetId in (82487322,82487297,82589091,82487307,82487329,82487337,82487344,82589096,82487466,82589099) -- region id
+			AND e.EntityTypeId IN (20, 19) -- PowerPlant, GenerationAggregation
+			AND conf.ConfidenceValue = 1.00
+			AND gedo.IsMonitored = 1 and gedo.ShowInProduct = 1
+			AND conf.BeginDate &gt;= DATEADD(YEAR, DATEDIFF(YEAR, 0, DATEADD(year, -2, GETDATE())), 0)
+			AND DATEDIFF(dd, begindate, GETDATE()) &lt; 100
+		UNION ALL
+
+		SELECT
+			dg.MenuName GeographyZone
+			,e.GlobalEntityId
+			,e.Name
+		--	,cc.begindate
+			,cc.begindate
+			,cc.enddate
+			,Note,DataProviderCode_Name, DataStreamSourceCode_Name, CollectionSystemTypeCode_Name, DATEDIFF(dd, BeginDate, GETDATE()) date_diff
+		FROM entitlement.EntityUniverse e  (NOLOCK)
+			JOIN masterdata.DimGeographicalZone dg (NOLOCK)
+					ON dg.DimGeographicalZoneId = e.GeographyZoneId 
+			JOIN powerrt.ContentConfidence cc (NOLOCK)
+					ON e.GlobalEntityId = cc.GlobalEntityId 
+			join masterdata.DimCollectionInstanceType instype (NOLOCK)
+			on instype.DimCollectionInstanceTypeId = cc.CollectionInstanceTypeId
+		WHERE e.EntityTypeId IN (19,20)
+			AND e.ProductRegionId = 1
+			AND e.countryid = 65364955
+			AND dg.MenuName IN ('FRCC','SERC','WECC')
+			AND cc.ConfidenceValue = 1.00
+			AND cc.BeginDate &gt;= DATEADD(YEAR, DATEDIFF(YEAR, 0, DATEADD(year, -2, GETDATE())), 0)
+			AND DATEDIFF(dd, begindate, GETDATE()) &lt; 100
+	)
+	,TimeSeries AS(
+			SELECT
+				CAST(DATEADD(DAY, nbr - 1, '20130101') as date) cal_day
+			FROM (
+				SELECT ROW_NUMBER() OVER ( ORDER BY c.object_id ) AS Nbr
+				FROM sys.columns c
+				) nbrs
+			WHERE nbr - 1 &lt;= DATEDIFF(DAY, '20170101', '20231001')
+				AND DATEADD(DAY, nbr - 1, '20130101')  &lt; GETDATE()
+	)
+	, R as (select CAST(GETDATE() AS DATE)dt, name region from entitlement.Entityset es (nolock)
+where es.EntitlementEntitysetId in (82487322,82487297,82589091,82487307,82487329,82487337,82487344,82589096,82487466,82589099))
+select R.dt,R.region,
+case when Global_Entity_ID is null then 0 else Global_Entity_ID end Global_Entity_ID 
+,case when Plant_Name is null then 'No plants on 999 in this region' else Plant_Name end Plant_Name
+,case when Reporting_Date_Begin is null then 'No plants on 999 in this region' else CONVERT(varchar(10),Reporting_Date_Begin,101) end Reporting_Date_Begin 
+,case when Reporting_Date_End is null then 'No plants on 999 in this region' else CONVERT(varchar(10),Reporting_Date_End,101) end Reporting_Date_End  
+--,case when Note is null then 'No plants on 999 in this region' else Note end Note  
+,Note
+--,case when DataProviderCode_Name is null then 'No plants on 999 in this region' else DataProviderCode_Name end DataProviderCode_Name
+--,case when DataStreamSourceCode_Name is null then 'No plants on 999 in this region' else DataStreamSourceCode_Name end DataStreamSourceCode_Name
+--,case when CollectionSystemTypeCode_Name is null then 'No plants on 999 in this region' else CollectionSystemTypeCode_Name end CollectionSystemTypeCode_Name
+,DataProviderCode_Name
+,DataStreamSourceCode_Name
+,CollectionSystemTypeCode_Name
+,case when date_diff is null then 0 else date_diff end date_diff
+ from 
+R left outer join
+
+	(SELECT DISTINCT
+		TS.cal_day
+,case when E.region is null then 'N/A' else E.Region end Region
+,Global_Entity_ID,Plant_Name,Reporting_Date_Begin,Reporting_Date_End,Note,DataProviderCode_Name,DataStreamSourceCode_Name,CollectionSystemTypeCode_Name,date_diff
+	FROM  entities E
+	inner join TimeSeries TS
+	ON TS.cal_day &gt;= E.Reporting_Date_Begin
+AND TS.cal_day &lt;= E.Reporting_Date_End - 1--excludes the last day of the maintenance
+WHERE Reporting_Date_Begin &lt;&gt; Reporting_Date_END -- excludes the plants that were shaded/unshaded on the same day
+AND cal_day = CAST(GETDATE() AS DATE)
+)a
+on dt = cal_day and R.region = a.region
+ORDER BY dt, region;</CommandText>
+        <rd:UseGenericDesigner>true</rd:UseGenericDesigner>
+      </Query>
+      <Fields>
+        <Field Name="dt">
+          <DataField>dt</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="region">
+          <DataField>region</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Global_Entity_ID">
+          <DataField>Global_Entity_ID</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="Plant_Name">
+          <DataField>Plant_Name</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Reporting_Date_Begin">
+          <DataField>Reporting_Date_Begin</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Reporting_Date_End">
+          <DataField>Reporting_Date_End</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Note">
+          <DataField>Note</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="DataProviderCode_Name">
+          <DataField>DataProviderCode_Name</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="DataStreamSourceCode_Name">
+          <DataField>DataStreamSourceCode_Name</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="CollectionSystemTypeCode_Name">
+          <DataField>CollectionSystemTypeCode_Name</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="date_diff">
+          <DataField>date_diff</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="maintenance_history">
+      <Query>
+        <DataSourceName>genpowerrtdbPROD</DataSourceName>
+        <CommandText>WITH entities --(Region,Global_Entity_ID,Plant_Name,cal_day,Reporting_Date_Begin,Reporting_Date_End,Note,DataProviderCode_Name,DataStreamSourceCode_Name,date_diff)
+AS(
+		SELECT
+			es.name as Region
+			,ged.GlobalEntityId as Global_Entity_ID
+			,e.name as Plant_Name
+			--,cast(conf.BeginDate AS DATE) as cal_day
+			,cast(conf.BeginDate AS DATE) as Reporting_Date_Begin
+			,cast(conf.EndDate AS DATE) as Reporting_Date_End -- select * 
+			,Note,DataProviderCode_Name, DataStreamSourceCode_Name, DATEDIFF(dd, begindate, GETDATE()) date_diff
+			FROM entitlement.Entityset es (NOLOCK)
+				JOIN entitlement.GenscapeAggregationEntitySetDetail ged (NOLOCK)
+						ON es.EntitysetId = ged.EntitysetId
+				JOIN entitlement.EntityUniverse e (NOLOCK)
+						ON ged.GlobalEntityId = e.GlobalEntityId
+				JOIN powerrt.ContentConfidence conf (NOLOCK)
+						ON ged.GlobalEntityId = conf.GlobalEntityId
+				join masterdata.DimCollectionInstanceType instype (NOLOCK)
+						ON instype.DimCollectionInstanceTypeId = conf.CollectionInstanceTypeId
+		where es.EntitlementEntitysetId in (82487322,82487297,82589091,82487307,82487329,82487337,82487344,82589096,82487466,82589099) -- region id
+			AND e.EntityTypeId IN (20, 19) -- PowerPlant, GenerationAggregation
+			AND conf.ConfidenceValue = 1.00
+			AND conf.BeginDate &gt;= DATEADD(YEAR, DATEDIFF(YEAR, 0, DATEADD(year, -2, GETDATE())), 0)
+			
+		UNION ALL
+
+		SELECT
+			dg.MenuName GeographyZone
+			,e.GlobalEntityId
+			,e.Name
+		--	,cc.begindate
+			,cc.begindate
+			,cc.enddate
+			,Note,DataProviderCode_Name, DataStreamSourceCode_Name, DATEDIFF(dd, BeginDate, GETDATE()) date_diff
+		FROM entitlement.EntityUniverse e  (NOLOCK)
+			JOIN masterdata.DimGeographicalZone dg (NOLOCK)
+					ON dg.DimGeographicalZoneId = e.GeographyZoneId 
+			JOIN powerrt.ContentConfidence cc (NOLOCK)
+					ON e.GlobalEntityId = cc.GlobalEntityId 
+			join masterdata.DimCollectionInstanceType instype (NOLOCK)
+			on instype.DimCollectionInstanceTypeId = cc.CollectionInstanceTypeId
+		WHERE e.EntityTypeId IN (19,20)
+			AND e.ProductRegionId = 1
+			AND e.countryid = 65364955
+			AND dg.MenuName IN ('FRCC','SERC','WECC')
+			AND cc.ConfidenceValue = 1.00
+			AND cc.BeginDate &gt;= DATEADD(YEAR, DATEDIFF(YEAR, 0, DATEADD(year, -2, GETDATE())), 0)
+	)
+	,TimeSeries AS(
+			SELECT
+				CAST(DATEADD(DAY, nbr - 1, '20130101') as date) cal_day
+			FROM (
+				SELECT ROW_NUMBER() OVER ( ORDER BY c.object_id ) AS Nbr
+				FROM sys.columns c
+				) nbrs
+			WHERE nbr - 1 &lt;= DATEDIFF(DAY, '20170101', '20231001')
+				AND DATEADD(DAY, nbr - 1, '20130101')  &lt; GETDATE()
+	)
+	SELECT DISTINCT
+		TS.cal_day
+		,E.Region
+		,E.Global_Entity_ID
+		,E.Plant_Name
+		,E.Reporting_Date_Begin
+		,E.Reporting_Date_End 
+		,E.DataProviderCode_Name
+		,E.DataStreamSourceCode_Name
+		,E.date_diff
+		,E.Note
+	FROM TimeSeries TS
+		INNER JOIN entities E
+				ON TS.cal_day &gt;= E.Reporting_Date_Begin
+				AND TS.cal_day &lt;= E.Reporting_Date_End - 1 --excludes the last day of the maintenance
+WHERE Reporting_Date_Begin &lt;&gt; Reporting_Date_END -- excludes the plants that were shaded/unshaded on the same day
+--AND cal_day = CAST(GETDATE() AS DATE)
+ORDER BY cal_day, reporting_date_begin DESC;</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="cal_day">
+          <DataField>cal_day</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="Region">
+          <DataField>Region</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Global_Entity_ID">
+          <DataField>Global_Entity_ID</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="Plant_Name">
+          <DataField>Plant_Name</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Reporting_Date_Begin">
+          <DataField>Reporting_Date_Begin</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="Reporting_Date_End">
+          <DataField>Reporting_Date_End</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="DataProviderCode_Name">
+          <DataField>DataProviderCode_Name</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="DataStreamSourceCode_Name">
+          <DataField>DataStreamSourceCode_Name</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="date_diff">
+          <DataField>date_diff</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="Note">
+          <DataField>Note</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+  </DataSets>
+  <ReportSections>
+    <ReportSection>
+      <Body>
+        <ReportItems>
+          <Textbox Name="Textbox1">
+            <CanGrow>true</CanGrow>
+            <KeepTogether>true</KeepTogether>
+            <Paragraphs>
+              <Paragraph>
+                <TextRuns>
+                  <TextRun>
+                    <Value>Daily Maintenance History</Value>
+                    <Style>
+                      <FontWeight>Bold</FontWeight>
+                    </Style>
+                  </TextRun>
+                </TextRuns>
+                <Style />
+              </Paragraph>
+            </Paragraphs>
+            <rd:DefaultName>Textbox1</rd:DefaultName>
+            <Top>0.35292in</Top>
+            <Left>0.125in</Left>
+            <Height>0.22917in</Height>
+            <Width>1.97917in</Width>
+            <Style>
+              <Border>
+                <Style>None</Style>
+              </Border>
+              <PaddingLeft>2pt</PaddingLeft>
+              <PaddingRight>2pt</PaddingRight>
+              <PaddingTop>2pt</PaddingTop>
+              <PaddingBottom>2pt</PaddingBottom>
+            </Style>
+          </Textbox>
+          <Tablix Name="Tablix4">
+            <TablixBody>
+              <TablixColumns>
+                <TablixColumn>
+                  <Width>0.56076in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>0.82465in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>2.28299in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>2.14757in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.05382in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>0.46007in</Width>
+                </TablixColumn>
+              </TablixColumns>
+              <TablixRows>
+                <TablixRow>
+                  <Height>0.25in</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox41">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Region</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox41</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox43">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>GID</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox43</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox45">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Plant </Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox45</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox47">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Reason</Value>
+                                  <Style>
+                                    <FontFamily>Arial</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox47</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox49">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Monitor Type</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox49</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox51">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Days</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox51</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+                <TablixRow>
+                  <Height>0.25in</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="region">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!region.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>region</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(RunningValue(Fields!region.Value,CountDistinct,Nothing) MOD 2 = 1, "#c6c6c6", "#dedede")</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Global_Entity_ID">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!Global_Entity_ID.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Global_Entity_ID</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(RunningValue(Fields!region.Value,CountDistinct,Nothing) MOD 2 = 1, "#c6c6c6", "#dedede")</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Plant_Name">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!Plant_Name.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Plant_Name</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(RunningValue(Fields!region.Value,CountDistinct,Nothing) MOD 2 = 1, "#c6c6c6", "#dedede")</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Note">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!Note.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Note</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(RunningValue(Fields!region.Value,CountDistinct,Nothing) MOD 2 = 1, "#c6c6c6", "#dedede")</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="DataStreamSourceCode_Name">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!DataStreamSourceCode_Name.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>DataStreamSourceCode_Name</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(RunningValue(Fields!region.Value,CountDistinct,Nothing) MOD 2 = 1, "#c6c6c6", "#dedede")</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="date_diff">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!date_diff.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>date_diff</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(RunningValue(Fields!region.Value,CountDistinct,Nothing) MOD 2 = 1, "#c6c6c6", "#dedede")</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+              </TablixRows>
+            </TablixBody>
+            <TablixColumnHierarchy>
+              <TablixMembers>
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+              </TablixMembers>
+            </TablixColumnHierarchy>
+            <TablixRowHierarchy>
+              <TablixMembers>
+                <TablixMember>
+                  <KeepWithGroup>After</KeepWithGroup>
+                </TablixMember>
+                <TablixMember>
+                  <Group Name="Details" />
+                </TablixMember>
+              </TablixMembers>
+            </TablixRowHierarchy>
+            <KeepTogether>true</KeepTogether>
+            <DataSetName>plant_by_region</DataSetName>
+            <SortExpressions>
+              <SortExpression>
+                <Value>=Fields!region.Value</Value>
+              </SortExpression>
+              <SortExpression>
+                <Value>=Fields!Plant_Name.Value</Value>
+              </SortExpression>
+            </SortExpressions>
+            <Top>4.39459in</Top>
+            <Left>0.125in</Left>
+            <Height>0.5in</Height>
+            <Width>7.32986in</Width>
+            <ZIndex>1</ZIndex>
+            <Style>
+              <Border>
+                <Style>None</Style>
+              </Border>
+            </Style>
+          </Tablix>
+          <Tablix Name="Tablix5">
+            <TablixBody>
+              <TablixColumns>
+                <TablixColumn>
+                  <Width>0.56076in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>0.6741in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>2.28299in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>2.14757in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.05382in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>0.48785in</Width>
+                </TablixColumn>
+              </TablixColumns>
+              <TablixRows>
+                <TablixRow>
+                  <Height>0.25in</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox42">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Region</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox41</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox44">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>GID</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox43</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox46">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Plant</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox45</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox48">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Reason</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox47</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox50">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Monitor Type</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox49</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox52">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Days</Value>
+                                  <Style>
+                                    <FontFamily>Arial</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox51</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+                <TablixRow>
+                  <Height>0.25in</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="region2">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!region.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>region</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!DataStreamSourceCode_Name.Value = "EMF Generation","#afafaf",IIF(Fields!DataStreamSourceCode_Name.Value = "IR Generation","#c6c6c6","#dedede"))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Global_Entity_ID2">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!Global_Entity_ID.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Global_Entity_ID</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!DataStreamSourceCode_Name.Value = "EMF Generation","#afafaf",IIF(Fields!DataStreamSourceCode_Name.Value = "IR Generation","#c6c6c6","#dedede"))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Plant_Name2">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!Plant_Name.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Plant_Name</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!DataStreamSourceCode_Name.Value = "EMF Generation","#afafaf",IIF(Fields!DataStreamSourceCode_Name.Value = "IR Generation","#c6c6c6","#dedede"))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Note2">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!Note.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Note</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!DataStreamSourceCode_Name.Value = "EMF Generation","#afafaf",IIF(Fields!DataStreamSourceCode_Name.Value = "IR Generation","#c6c6c6","#dedede"))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="DataStreamSourceCode_Name2">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!DataStreamSourceCode_Name.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>DataStreamSourceCode_Name</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!DataStreamSourceCode_Name.Value = "EMF Generation","#afafaf",IIF(Fields!DataStreamSourceCode_Name.Value = "IR Generation","#c6c6c6","#dedede"))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="date_diff2">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!date_diff.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>date_diff</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!DataStreamSourceCode_Name.Value = "EMF Generation","#afafaf",IIF(Fields!DataStreamSourceCode_Name.Value = "IR Generation","#c6c6c6","#dedede"))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+              </TablixRows>
+            </TablixBody>
+            <TablixColumnHierarchy>
+              <TablixMembers>
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+              </TablixMembers>
+            </TablixColumnHierarchy>
+            <TablixRowHierarchy>
+              <TablixMembers>
+                <TablixMember>
+                  <KeepWithGroup>After</KeepWithGroup>
+                </TablixMember>
+                <TablixMember>
+                  <Group Name="Details2">
+                    <GroupExpressions>
+                      <GroupExpression>=Fields!Global_Entity_ID.Value</GroupExpression>
+                    </GroupExpressions>
+                  </Group>
+                  <Visibility>
+                    <Hidden>=Iif(Fields!Global_Entity_ID.Value = 0,true,false)</Hidden>
+                  </Visibility>
+                </TablixMember>
+              </TablixMembers>
+            </TablixRowHierarchy>
+            <KeepTogether>true</KeepTogether>
+            <DataSetName>plant_by_region</DataSetName>
+            <SortExpressions>
+              <SortExpression>
+                <Value>=Fields!DataStreamSourceCode_Name.Value</Value>
+              </SortExpression>
+              <SortExpression>
+                <Value>=Fields!Plant_Name.Value</Value>
+              </SortExpression>
+            </SortExpressions>
+            <Top>4.39459in</Top>
+            <Left>7.77084in</Left>
+            <Height>0.5in</Height>
+            <Width>7.20709in</Width>
+            <ZIndex>2</ZIndex>
+            <Style>
+              <Border>
+                <Style>None</Style>
+              </Border>
+            </Style>
+          </Tablix>
+          <Chart Name="Chart1">
+            <ChartCategoryHierarchy>
+              <ChartMembers>
+                <ChartMember>
+                  <Group Name="Chart1_CategoryGroup">
+                    <GroupExpressions>
+                      <GroupExpression>=Fields!cal_day.Value</GroupExpression>
+                    </GroupExpressions>
+                  </Group>
+                  <SortExpressions>
+                    <SortExpression>
+                      <Value>=Fields!cal_day.Value</Value>
+                    </SortExpression>
+                  </SortExpressions>
+                  <Label>=Fields!cal_day.Value</Label>
+                </ChartMember>
+              </ChartMembers>
+            </ChartCategoryHierarchy>
+            <ChartSeriesHierarchy>
+              <ChartMembers>
+                <ChartMember>
+                  <Label>Plant Name</Label>
+                </ChartMember>
+              </ChartMembers>
+            </ChartSeriesHierarchy>
+            <ChartData>
+              <ChartSeriesCollection>
+                <ChartSeries Name="Plant_Name">
+                  <ChartDataPoints>
+                    <ChartDataPoint>
+                      <ChartDataPointValues>
+                        <Y>=Count(Fields!Plant_Name.Value)</Y>
+                      </ChartDataPointValues>
+                      <ChartDataLabel>
+                        <Style />
+                      </ChartDataLabel>
+                      <Style>
+                        <Color>LimeGreen</Color>
+                      </Style>
+                      <ChartMarker>
+                        <Style />
+                      </ChartMarker>
+                      <DataElementOutput>Output</DataElementOutput>
+                    </ChartDataPoint>
+                  </ChartDataPoints>
+                  <Type>Area</Type>
+                  <Subtype>Smooth</Subtype>
+                  <Style />
+                  <ChartEmptyPoints>
+                    <Style />
+                    <ChartMarker>
+                      <Style />
+                    </ChartMarker>
+                    <ChartDataLabel>
+                      <Style />
+                    </ChartDataLabel>
+                  </ChartEmptyPoints>
+                  <ValueAxisName>Primary</ValueAxisName>
+                  <CategoryAxisName>Primary</CategoryAxisName>
+                  <ChartSmartLabel>
+                    <CalloutLineColor>Black</CalloutLineColor>
+                    <MinMovingDistance>0pt</MinMovingDistance>
+                  </ChartSmartLabel>
+                </ChartSeries>
+              </ChartSeriesCollection>
+            </ChartData>
+            <ChartAreas>
+              <ChartArea Name="Default">
+                <ChartCategoryAxes>
+                  <ChartAxis Name="Primary">
+                    <Style>
+                      <Border>
+                        <Color>Gainsboro</Color>
+                        <Style>None</Style>
+                      </Border>
+                      <FontSize>8pt</FontSize>
+                      <FontWeight>Bold</FontWeight>
+                      <Format>yyyy-MM</Format>
+                      <Color>#5c5c5c</Color>
+                    </Style>
+                    <ChartAxisTitle>
+                      <Caption />
+                      <Style>
+                        <FontSize>9pt</FontSize>
+                        <Color>#5c5c5c</Color>
+                      </Style>
+                    </ChartAxisTitle>
+                    <Interval>2</Interval>
+                    <IntervalType>Months</IntervalType>
+                    <ChartMajorGridLines>
+                      <Enabled>False</Enabled>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                        </Border>
+                      </Style>
+                    </ChartMajorGridLines>
+                    <ChartMinorGridLines>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                          <Style>Dotted</Style>
+                        </Border>
+                      </Style>
+                    </ChartMinorGridLines>
+                    <ChartMajorTickMarks>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                          <Style>None</Style>
+                        </Border>
+                      </Style>
+                    </ChartMajorTickMarks>
+                    <ChartMinorTickMarks>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                        </Border>
+                      </Style>
+                      <Length>0.5</Length>
+                    </ChartMinorTickMarks>
+                    <CrossAt>NaN</CrossAt>
+                    <Scalar>true</Scalar>
+                    <Minimum>NaN</Minimum>
+                    <Maximum>NaN</Maximum>
+                    <Angle>-90</Angle>
+                    <LabelsAutoFitDisabled>true</LabelsAutoFitDisabled>
+                    <ChartAxisScaleBreak>
+                      <Style />
+                    </ChartAxisScaleBreak>
+                  </ChartAxis>
+                  <ChartAxis Name="Secondary">
+                    <Style>
+                      <Border>
+                        <Color>Gainsboro</Color>
+                        <Style>None</Style>
+                      </Border>
+                      <FontSize>8pt</FontSize>
+                      <Color>#5c5c5c</Color>
+                    </Style>
+                    <ChartAxisTitle>
+                      <Caption />
+                      <Style>
+                        <FontSize>9pt</FontSize>
+                        <Color>#5c5c5c</Color>
+                      </Style>
+                    </ChartAxisTitle>
+                    <ChartMajorGridLines>
+                      <Enabled>False</Enabled>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                        </Border>
+                      </Style>
+                    </ChartMajorGridLines>
+                    <ChartMinorGridLines>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                          <Style>Dotted</Style>
+                        </Border>
+                      </Style>
+                    </ChartMinorGridLines>
+                    <ChartMajorTickMarks>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                          <Style>None</Style>
+                        </Border>
+                      </Style>
+                    </ChartMajorTickMarks>
+                    <ChartMinorTickMarks>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                        </Border>
+                      </Style>
+                      <Length>0.5</Length>
+                    </ChartMinorTickMarks>
+                    <CrossAt>NaN</CrossAt>
+                    <Location>Opposite</Location>
+                    <Minimum>NaN</Minimum>
+                    <Maximum>NaN</Maximum>
+                    <ChartAxisScaleBreak>
+                      <Style />
+                    </ChartAxisScaleBreak>
+                  </ChartAxis>
+                </ChartCategoryAxes>
+                <ChartValueAxes>
+                  <ChartAxis Name="Primary">
+                    <Style>
+                      <Border>
+                        <Color>Gainsboro</Color>
+                        <Style>None</Style>
+                      </Border>
+                      <FontSize>8pt</FontSize>
+                      <Color>#5c5c5c</Color>
+                    </Style>
+                    <ChartAxisTitle>
+                      <Caption>Plants on 999</Caption>
+                      <Style>
+                        <FontSize>9pt</FontSize>
+                        <FontWeight>Bold</FontWeight>
+                        <Color>#5c5c5c</Color>
+                      </Style>
+                    </ChartAxisTitle>
+                    <ChartMajorGridLines>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                        </Border>
+                      </Style>
+                    </ChartMajorGridLines>
+                    <ChartMinorGridLines>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                          <Style>Dotted</Style>
+                        </Border>
+                      </Style>
+                    </ChartMinorGridLines>
+                    <ChartMajorTickMarks>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                          <Style>None</Style>
+                        </Border>
+                      </Style>
+                    </ChartMajorTickMarks>
+                    <ChartMinorTickMarks>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                        </Border>
+                      </Style>
+                      <Length>0.5</Length>
+                    </ChartMinorTickMarks>
+                    <CrossAt>NaN</CrossAt>
+                    <Minimum>NaN</Minimum>
+                    <Maximum>NaN</Maximum>
+                    <ChartAxisScaleBreak>
+                      <Style />
+                    </ChartAxisScaleBreak>
+                  </ChartAxis>
+                  <ChartAxis Name="Secondary">
+                    <Style>
+                      <Border>
+                        <Color>Gainsboro</Color>
+                        <Style>None</Style>
+                      </Border>
+                      <FontSize>8pt</FontSize>
+                      <Color>#5c5c5c</Color>
+                    </Style>
+                    <ChartAxisTitle>
+                      <Caption />
+                      <Style>
+                        <FontSize>9pt</FontSize>
+                        <Color>#5c5c5c</Color>
+                      </Style>
+                    </ChartAxisTitle>
+                    <ChartMajorGridLines>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                        </Border>
+                      </Style>
+                    </ChartMajorGridLines>
+                    <ChartMinorGridLines>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                          <Style>Dotted</Style>
+                        </Border>
+                      </Style>
+                    </ChartMinorGridLines>
+                    <ChartMajorTickMarks>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                          <Style>None</Style>
+                        </Border>
+                      </Style>
+                    </ChartMajorTickMarks>
+                    <ChartMinorTickMarks>
+                      <Style>
+                        <Border>
+                          <Color>Gainsboro</Color>
+                        </Border>
+                      </Style>
+                      <Length>0.5</Length>
+                    </ChartMinorTickMarks>
+                    <CrossAt>NaN</CrossAt>
+                    <Location>Opposite</Location>
+                    <Minimum>NaN</Minimum>
+                    <Maximum>NaN</Maximum>
+                    <ChartAxisScaleBreak>
+                      <Style />
+                    </ChartAxisScaleBreak>
+                  </ChartAxis>
+                </ChartValueAxes>
+                <Style>
+                  <BackgroundColor>Silver</BackgroundColor>
+                  <BackgroundGradientType>VerticalCenter</BackgroundGradientType>
+                  <BackgroundHatchType>None</BackgroundHatchType>
+                </Style>
+              </ChartArea>
+            </ChartAreas>
+            <Palette>Pacific</Palette>
+            <ChartBorderSkin>
+              <Style>
+                <BackgroundColor>Gray</BackgroundColor>
+                <BackgroundGradientType>None</BackgroundGradientType>
+                <Color>White</Color>
+              </Style>
+            </ChartBorderSkin>
+            <ChartNoDataMessage Name="NoDataMessage">
+              <Caption>No Data Available</Caption>
+              <Style>
+                <BackgroundGradientType>None</BackgroundGradientType>
+                <FontWeight>Bold</FontWeight>
+                <TextAlign>General</TextAlign>
+                <VerticalAlign>Top</VerticalAlign>
+              </Style>
+            </ChartNoDataMessage>
+            <DataSetName>maintenance_history</DataSetName>
+            <Top>0.76958in</Top>
+            <Left>0.125in</Left>
+            <Height>3.09375in</Height>
+            <Width>7.32986in</Width>
+            <ZIndex>3</ZIndex>
+            <Style>
+              <Border>
+                <Style>Solid</Style>
+              </Border>
+              <BackgroundColor>LightGrey</BackgroundColor>
+              <BackgroundGradientType>VerticalCenter</BackgroundGradientType>
+            </Style>
+          </Chart>
+          <Textbox Name="Textbox2">
+            <CanGrow>true</CanGrow>
+            <KeepTogether>true</KeepTogether>
+            <Paragraphs>
+              <Paragraph>
+                <TextRuns>
+                  <TextRun>
+                    <Value>Plants by Region</Value>
+                    <Style>
+                      <FontWeight>Bold</FontWeight>
+                    </Style>
+                  </TextRun>
+                </TextRuns>
+                <Style />
+              </Paragraph>
+            </Paragraphs>
+            <rd:DefaultName>Textbox1</rd:DefaultName>
+            <Top>4.05208in</Top>
+            <Left>0.125in</Left>
+            <Height>0.22917in</Height>
+            <Width>1.97917in</Width>
+            <ZIndex>4</ZIndex>
+            <Style>
+              <Border>
+                <Style>None</Style>
+              </Border>
+              <PaddingLeft>2pt</PaddingLeft>
+              <PaddingRight>2pt</PaddingRight>
+              <PaddingTop>2pt</PaddingTop>
+              <PaddingBottom>2pt</PaddingBottom>
+            </Style>
+          </Textbox>
+          <Textbox Name="Textbox3">
+            <CanGrow>true</CanGrow>
+            <KeepTogether>true</KeepTogether>
+            <Paragraphs>
+              <Paragraph>
+                <TextRuns>
+                  <TextRun>
+                    <Value>Plants by Monitor Type</Value>
+                    <Style>
+                      <FontWeight>Bold</FontWeight>
+                    </Style>
+                  </TextRun>
+                </TextRuns>
+                <Style />
+              </Paragraph>
+            </Paragraphs>
+            <rd:DefaultName>Textbox1</rd:DefaultName>
+            <Top>4.05208in</Top>
+            <Left>7.77084in</Left>
+            <Height>0.22917in</Height>
+            <Width>1.97917in</Width>
+            <ZIndex>5</ZIndex>
+            <Style>
+              <Border>
+                <Style>None</Style>
+              </Border>
+              <PaddingLeft>2pt</PaddingLeft>
+              <PaddingRight>2pt</PaddingRight>
+              <PaddingTop>2pt</PaddingTop>
+              <PaddingBottom>2pt</PaddingBottom>
+            </Style>
+          </Textbox>
+          <Textbox Name="Textbox4">
+            <CanGrow>true</CanGrow>
+            <KeepTogether>true</KeepTogether>
+            <Paragraphs>
+              <Paragraph>
+                <TextRuns>
+                  <TextRun>
+                    <Value>Regional Maintenance Breakdown </Value>
+                    <Style>
+                      <FontWeight>Bold</FontWeight>
+                    </Style>
+                  </TextRun>
+                </TextRuns>
+                <Style />
+              </Paragraph>
+            </Paragraphs>
+            <rd:DefaultName>Textbox1</rd:DefaultName>
+            <Top>0.35292in</Top>
+            <Left>7.77084in</Left>
+            <Height>0.22917in</Height>
+            <Width>3.625in</Width>
+            <ZIndex>6</ZIndex>
+            <Style>
+              <Border>
+                <Style>None</Style>
+              </Border>
+              <PaddingLeft>2pt</PaddingLeft>
+              <PaddingRight>2pt</PaddingRight>
+              <PaddingTop>2pt</PaddingTop>
+              <PaddingBottom>2pt</PaddingBottom>
+            </Style>
+          </Textbox>
+          <Tablix Name="Tablix6">
+            <TablixBody>
+              <TablixColumns>
+                <TablixColumn>
+                  <Width>1in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>0.97917in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>0.96749in</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.07292in</Width>
+                </TablixColumn>
+              </TablixColumns>
+              <TablixRows>
+                <TablixRow>
+                  <Height>0.25in</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox72">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Region</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox72</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox74">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Plants on Maintenance Status</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox74</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox76">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Plants on Maintenance Status %</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox76</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox78">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Region Priority</Value>
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox78</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+                <TablixRow>
+                  <Height>0.25in</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="region1">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!region.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>region1</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!perc_ctq.Value &lt; 0 and Fields!perc_ctq.Value &gt;= -50,"#ddefd5",
+IIF(Fields!perc_ctq.Value &lt; -50,"#aac1a0",
+IIF(Fields!perc_ctq.Value &gt; 15,"#ed8282",
+IIF(Fields!perc_ctq.Value &gt; 0 and Fields!perc_ctq.Value &lt;= 15,"#f2b8b8","#aac1a0"))))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="plants_999">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!plants_999.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>plants_999</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!perc_ctq.Value &lt; 0 and Fields!perc_ctq.Value &gt;= -50,"#ddefd5",
+IIF(Fields!perc_ctq.Value &lt; -50,"#aac1a0",
+IIF(Fields!perc_ctq.Value &gt; 15,"#ed8282",
+IIF(Fields!perc_ctq.Value &gt; 0 and Fields!perc_ctq.Value &lt;= 15,"#f2b8b8","#aac1a0"))))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="perc_999">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!perc_999.Value/100</Value>
+                                  <Style>
+                                    <Format>0.00%</Format>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>perc_999</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!perc_ctq.Value &lt; 0 and Fields!perc_ctq.Value &gt;= -50,"#ddefd5",
+IIF(Fields!perc_ctq.Value &lt; -50,"#aac1a0",
+IIF(Fields!perc_ctq.Value &gt; 15,"#ed8282",
+IIF(Fields!perc_ctq.Value &gt; 0 and Fields!perc_ctq.Value &lt;= 15,"#f2b8b8","#aac1a0"))))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="region_priority_id">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!region_priority_id.Value</Value>
+                                  <Style />
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>region_priority_id</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>LightGrey</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!perc_ctq.Value &lt; 0 and Fields!perc_ctq.Value &gt;= -50,"#ddefd5",
+IIF(Fields!perc_ctq.Value &lt; -50,"#aac1a0",
+IIF(Fields!perc_ctq.Value &gt; 15,"#ed8282",
+IIF(Fields!perc_ctq.Value &gt; 0 and Fields!perc_ctq.Value &lt;= 15,"#f2b8b8","#aac1a0"))))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+              </TablixRows>
+            </TablixBody>
+            <TablixColumnHierarchy>
+              <TablixMembers>
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+              </TablixMembers>
+            </TablixColumnHierarchy>
+            <TablixRowHierarchy>
+              <TablixMembers>
+                <TablixMember>
+                  <KeepWithGroup>After</KeepWithGroup>
+                </TablixMember>
+                <TablixMember>
+                  <Group Name="Details1" />
+                </TablixMember>
+              </TablixMembers>
+            </TablixRowHierarchy>
+            <DataSetName>maintenance_status</DataSetName>
+            <Top>0.76958in</Top>
+            <Left>7.77084in</Left>
+            <Height>0.5in</Height>
+            <Width>4.01958in</Width>
+            <ZIndex>7</ZIndex>
+            <Style>
+              <Border>
+                <Style>None</Style>
+              </Border>
+            </Style>
+          </Tablix>
+        </ReportItems>
+        <Height>10.5in</Height>
+        <Style>
+          <Border>
+            <Style>None</Style>
+          </Border>
+        </Style>
+      </Body>
+      <Width>15.70709in</Width>
+      <Page>
+        <PageHeader>
+          <Height>1.16542in</Height>
+          <PrintOnFirstPage>true</PrintOnFirstPage>
+          <PrintOnLastPage>true</PrintOnLastPage>
+          <ReportItems>
+            <Textbox Name="Textbox71">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>Daily Maintenance Report</Value>
+                      <Style>
+                        <FontSize>24pt</FontSize>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style>
+                    <TextAlign>Center</TextAlign>
+                  </Style>
+                </Paragraph>
+              </Paragraphs>
+              <rd:DefaultName>Textbox71</rd:DefaultName>
+              <Top>0.16542in</Top>
+              <Left>3.8425in</Left>
+              <Height>0.48958in</Height>
+              <Width>7.8125in</Width>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+            <Textbox Name="Textbox81">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>=Globals!ExecutionTime</Value>
+                      <Style>
+                        <Format>g</Format>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style>
+                    <TextAlign>Left</TextAlign>
+                  </Style>
+                </Paragraph>
+              </Paragraphs>
+              <rd:DefaultName>Textbox81</rd:DefaultName>
+              <Top>0.79042in</Top>
+              <Left>8.00473in</Left>
+              <Height>0.25in</Height>
+              <Width>2.57735in</Width>
+              <ZIndex>1</ZIndex>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+            <Textbox Name="Textbox82">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>Report Date:</Value>
+                      <Style />
+                    </TextRun>
+                  </TextRuns>
+                  <Style />
+                </Paragraph>
+              </Paragraphs>
+              <rd:DefaultName>Textbox82</rd:DefaultName>
+              <Top>0.79042in</Top>
+              <Left>7.02209in</Left>
+              <Height>0.25in</Height>
+              <Width>0.92708in</Width>
+              <ZIndex>2</ZIndex>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+          </ReportItems>
+          <Style>
+            <Border>
+              <Style>None</Style>
+            </Border>
+            <BackgroundColor>LightGrey</BackgroundColor>
+          </Style>
+        </PageHeader>
+        <LeftMargin>1in</LeftMargin>
+        <RightMargin>1in</RightMargin>
+        <TopMargin>1in</TopMargin>
+        <BottomMargin>1in</BottomMargin>
+        <Style />
+      </Page>
+    </ReportSection>
+  </ReportSections>
+  <ReportParametersLayout>
+    <GridLayoutDefinition>
+      <NumberOfColumns>4</NumberOfColumns>
+      <NumberOfRows>2</NumberOfRows>
+    </GridLayoutDefinition>
+  </ReportParametersLayout>
+  <rd:ReportUnitType>Inch</rd:ReportUnitType>
+  <rd:ReportID>0cfa9d87-0189-4403-8ee6-1996f3300438</rd:ReportID>
+</Report>
