@@ -268,7 +268,7 @@ AS(
 		where es.EntitlementEntitysetId in (82487322,82487297,82589091,82487307,82487329,82487337,82487344,82589096,82487466,82589099) -- region id
 			AND e.EntityTypeId IN (20, 19) -- PowerPlant, GenerationAggregation
 			AND conf.ConfidenceValue = 1.00
-	--		AND gedo.IsMonitored = 1 and gedo.ShowInProduct = 1
+			AND gedo.IsMonitored = 1 and gedo.ShowInProduct = 1
 			AND conf.BeginDate &gt;= DATEADD(YEAR, DATEDIFF(YEAR, 0, DATEADD(year, -2, GETDATE())), 0)
 			AND DATEDIFF(dd, begindate, GETDATE()) &lt; 180
 		UNION ALL
@@ -340,8 +340,7 @@ WHERE Reporting_Date_Begin &lt;&gt; Reporting_Date_END -- excludes the plants th
 AND cal_day = CAST(GETDATE() AS DATE)
 )a
 on dt = cal_day and R.region = a.region
-ORDER BY dt, region;
-</CommandText>
+ORDER BY dt, region;</CommandText>
         <rd:UseGenericDesigner>true</rd:UseGenericDesigner>
       </Query>
       <Fields>
